@@ -1,0 +1,986 @@
+FileHandler
+package com.passwordmanager.handler;
+
+import com.passwordmanager.model.Credential;
+import com.passwordmanager.util.EncryptionUtil;
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Base64;
+
+public class FileHandler {
+    
+    private static final String DATA_DIR = "data";
+    private static final String DATA_FILE = DATA_DIR + "/credentials.dat";
+    private static final String BACKUP_FILE = DATA_DIR + "/credentials.backup";
+    
+    static {
+        try {
+            Files.createDirectories(Paths.get(DATA_DIR));
+        } catch (IOException e) {
+            System.err.println("Failed to create data directory: " + e.getMessage());
+        }
+    }
+    
+    public static void saveCredentials(List<Credential> credentials, String masterPassword) throws Exception {
+        try {
+            createBackup();
+            
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            ObjectOutputStream oos = new ObjectOutputStream(bos);
+            oos.writeObject(credentials);
+            oos.close();
+            
+            String serializedData = Base64.getEncoder().encodeToString(bos.toByteArray());
+            String encryptedData = EncryptionUtil.encrypt(serializedData, masterPassword);
+            
+            try (PrintWriter writer = new PrintWriter(new FileWriter(DATA_FILE))) {
+                writer.println(encryptedData);
+            }
+            
+            System.out.println("[✓] Credentials saved successfully to secure storage.");
+            
+        } catch (Exception e) {
+            restoreFromBackup();
+            throw new Exception("Failed to save credentials: " + e.getMessage(), e);
+        }
+    }
+    
+    @SuppressWarnings("unchecked")
+    public static List<Credential> loadCredentials(String masterPassword) throws Exception {
+        File file = new File(DATA_FILE);
+        if (!file.exists()) {
+            return new ArrayList<>();
+        }
+        
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            String encryptedData = reader.readLine();
+            if (encryptedData == null || encryptedData.trim().isEmpty()) {
+                return new ArrayList<>();
+            }
+            
+            String serializedData = EncryptionUtil.decrypt(encryptedData.trim(), masterPassword);
+            byte[] data = Base64.getDecoder().decode(serializedData);
+            
+            ByteArrayInputStream bis = new ByteArrayInputStream(data);
+            ObjectInputStream ois = new ObjectInputStream(bis);
+            List<Credential> credentials = (List<Credential>) ois.readObject();
+            ois.close();
+            
+            return credentials != null ? credentials : new ArrayList<>();
+            
+        } catch (Exception e) {
+            throw new Exception("Failed to load credentials. Verify master password.", e);
+        }
+    }
+    
+    private static void createBackup() {
+        File dataFile = new File(DATA_FILE);
+        if (dataFile.exists()) {
+            try {
+                Files.copy(Paths.get(DATA_FILE), Paths.get(BACKUP_FILE), 
+                          StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+                System.err.println("Warning: Failed to create backup - " + e.getMessage());
+            }
+        }
+    }
+    
+    private static void restoreFromBackup() {
+        File backupFile = new File(BACKUP_FILE);
+        if (backupFile.exists()) {
+            try {
+                Files.copy(Paths.get(BACKUP_FILE), Paths.get(DATA_FILE), 
+                          StandardCopyOption.REPLACE_EXISTING);
+                System.out.println("[✓] Data restored from backup.");
+            } catch (IOException e) {
+                System.err.println("Failed to restore from backup: " + e.getMessage());
+            }
+        }
+    }
+    
+    public static void exportCredentials(List<Credential> credentials, String masterPassword, String exportPath) throws Exception {
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            ObjectOutputStream oos = new ObjectOutputStream(bos);
+            oos.writeObject(credentials);
+            oos.close();
+            
+            String serializedData = Base64.getEncoder().encodeToString(bos.toByteArray());
+            String encryptedData = EncryptionUtil.encrypt(serializedData, masterPassword);
+            
+            try (PrintWriter writer = new PrintWriter(new FileWriter(exportPath))) {
+                writer.println("# Secure Password Manager Export");
+                writer.println("# Generated: " + java.time.LocalDateTime.now());
+                writer.println("# Total credentials: " + credentials.size());
+                writer.println(encryptedData);
+            }
+            
+        } catch (Exception e) {
+            throw new Exception("Export failed: " + e.getMessage(), e);
+        }
+    }
+    
+    @SuppressWarnings("unchecked")
+    public static List<Credential> importCredentials(String importPath, String masterPassword) throws Exception {
+        try (BufferedReader reader = new BufferedReader(new FileReader(importPath))) {
+            String line;
+            String encryptedData = null;
+            // Skip header/comment lines starting with #
+            while ((line = reader.readLine()) != null) {
+                if (!line.startsWith("#") && !line.trim().isEmpty()) {
+                    encryptedData = line.trim();
+                    break;
+                }
+            }
+            if (encryptedData == null) {
+                throw new Exception("Invalid import file format");
+            }
+            String serializedData = EncryptionUtil.decrypt(encryptedData, masterPassword);
+            byte[] data = Base64.getDecoder().decode(serializedData);
+            ByteArrayInputStream bis = new ByteArrayInputStream(data);
+            ObjectInputStream ois = new ObjectInputStream(bis);
+            List<Credential> credentials = (List<Credential>) ois.readObject();
+            ois.close();
+            return credentials != null ? credentials : new ArrayList<>();
+        } catch (Exception e) {
+            throw new Exception("Import failed: " + e.getMessage(), e);
+        }
+    }
+    
+    public static boolean dataFileExists() {
+        return new File(DATA_FILE).exists();
+    }
+    
+    public static long getDataFileSize() {
+        File file = new File(DATA_FILE);
+        return file.exists() ? file.length() : -1;
+    }
+    
+    public static void secureDelete() throws Exception {
+        try {
+            Files.deleteIfExists(Paths.get(DATA_FILE));
+            Files.deleteIfExists(Paths.get(BACKUP_FILE));
+        } catch (IOException e) {
+            throw new Exception("Failed to delete data files: " + e.getMessage(), e);
+        }
+    }
+}
+
+Credential
+package com.passwordmanager.model;
+
+import java.io.Serializable;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+
+public class Credential implements Serializable {
+    private static final long serialVersionUID = 1L;
+    
+    private String id;
+    private String website;
+    private String username;
+    private String password;
+    private String notes;
+    private LocalDateTime createdDate;
+    private LocalDateTime modifiedDate;
+    
+    public Credential() {
+        this.createdDate = LocalDateTime.now();
+        this.modifiedDate = LocalDateTime.now();
+        this.id = generateId();
+    }
+    
+    public Credential(String website, String username, String password, String notes) {
+        this();
+        this.website = website;
+        this.username = username;
+        this.password = password;
+        this.notes = notes;
+    }
+    
+    private String generateId() {
+        return "CRED_" + System.currentTimeMillis() + "_" + (int)(Math.random() * 1000);
+    }
+    
+    // Getters and Setters
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
+    
+    public String getWebsite() { return website; }
+    public void setWebsite(String website) { 
+        this.website = website; 
+        updateModifiedDate(); 
+    }
+    
+    public String getUsername() { return username; }
+    public void setUsername(String username) { 
+        this.username = username; 
+        updateModifiedDate(); 
+    }
+    
+    public String getPassword() { return password; }
+    public void setPassword(String password) { 
+        this.password = password; 
+        updateModifiedDate(); 
+    }
+    
+    public String getNotes() { return notes; }
+    public void setNotes(String notes) { 
+        this.notes = notes; 
+        updateModifiedDate(); 
+    }
+    
+    public LocalDateTime getCreatedDate() { return createdDate; }
+    public void setCreatedDate(LocalDateTime createdDate) { this.createdDate = createdDate; }
+    
+    public LocalDateTime getModifiedDate() { return modifiedDate; }
+    public void setModifiedDate(LocalDateTime modifiedDate) { this.modifiedDate = modifiedDate; }
+    
+    private void updateModifiedDate() {
+        this.modifiedDate = LocalDateTime.now();
+    }
+    
+    @Override
+    public String toString() {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        return String.format(
+            "ID: %s\n" +
+            "Website: %s\n" +
+            "Username: %s\n" +
+            "Password: %s\n" +
+            "Notes: %s\n" +
+            "Created: %s\n" +
+            "Modified: %s\n",
+            id, website, username, password, 
+            (notes != null && !notes.trim().isEmpty()) ? notes : "No notes",
+            createdDate.format(formatter),
+            modifiedDate.format(formatter)
+        );
+    }
+    
+    public String toSecureString() {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        return String.format(
+            "ID: %s\n" +
+            "Website: %s\n" +
+            "Username: %s\n" +
+            "Password: ****\n" +
+            "Notes: %s\n" +
+            "Created: %s\n" +
+            "Modified: %s\n",
+            id, website, username,
+            (notes != null && !notes.trim().isEmpty()) ? notes : "No notes",
+            createdDate.format(formatter),
+            modifiedDate.format(formatter)
+        );
+    }
+    
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) return true;
+        if (obj == null || getClass() != obj.getClass()) return false;
+        Credential that = (Credential) obj;
+        return id != null && id.equals(that.id);
+    }
+    
+    @Override
+    public int hashCode() {
+        return id != null ? id.hashCode() : 0;
+    }
+}
+
+EncryptionUtil
+package com.passwordmanager.util;
+
+import javax.crypto.*;
+import javax.crypto.spec.*;
+import java.security.SecureRandom;
+import java.security.spec.KeySpec;
+import java.util.Base64;
+import javax.crypto.spec.PBEKeySpec;
+
+public class EncryptionUtil {
+    
+    private static final String ALGORITHM = "AES";
+    private static final String TRANSFORMATION = "AES/GCM/NoPadding";
+    private static final String KEY_DERIVATION_ALGORITHM = "PBKDF2WithHmacSHA256";
+    
+    private static final int GCM_IV_LENGTH = 12;
+    private static final int AES_KEY_LENGTH = 256;
+    private static final int SALT_LENGTH = 32;
+    private static final int PBKDF2_ITERATIONS = 100000;
+    
+    public static String encrypt(String plaintext, String password) throws Exception {
+        if (plaintext == null || password == null) {
+            throw new IllegalArgumentException("Plaintext and password cannot be null");
+        }
+        
+        byte[] salt = generateRandomBytes(SALT_LENGTH);
+        SecretKey secretKey = deriveKeyFromPassword(password, salt);
+        
+        Cipher cipher = Cipher.getInstance(TRANSFORMATION);
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey);
+        
+        byte[] iv = cipher.getIV();
+        byte[] ciphertext = cipher.doFinal(plaintext.getBytes("UTF-8"));
+        
+        byte[] encryptedData = new byte[salt.length + iv.length + ciphertext.length];
+        System.arraycopy(salt, 0, encryptedData, 0, salt.length);
+        System.arraycopy(iv, 0, encryptedData, salt.length, iv.length);
+        System.arraycopy(ciphertext, 0, encryptedData, salt.length + iv.length, ciphertext.length);
+        
+        return Base64.getEncoder().encodeToString(encryptedData);
+    }
+    
+    public static String decrypt(String encryptedData, String password) throws Exception {
+        if (encryptedData == null || password == null) {
+            throw new IllegalArgumentException("Encrypted data and password cannot be null");
+        }
+        
+        try {
+            byte[] decodedData = Base64.getDecoder().decode(encryptedData);
+            
+            byte[] salt = new byte[SALT_LENGTH];
+            byte[] iv = new byte[GCM_IV_LENGTH];
+            byte[] ciphertext = new byte[decodedData.length - SALT_LENGTH - GCM_IV_LENGTH];
+            
+            System.arraycopy(decodedData, 0, salt, 0, SALT_LENGTH);
+            System.arraycopy(decodedData, SALT_LENGTH, iv, 0, GCM_IV_LENGTH);
+            System.arraycopy(decodedData, SALT_LENGTH + GCM_IV_LENGTH, ciphertext, 0, ciphertext.length);
+            
+            SecretKey secretKey = deriveKeyFromPassword(password, salt);
+            
+            Cipher cipher = Cipher.getInstance(TRANSFORMATION);
+            GCMParameterSpec gcmSpec = new GCMParameterSpec(128, iv);
+            cipher.init(Cipher.DECRYPT_MODE, secretKey, gcmSpec);
+            
+            byte[] plaintext = cipher.doFinal(ciphertext);
+            return new String(plaintext, "UTF-8");
+            
+        } catch (Exception e) {
+            throw new Exception("Decryption failed. Invalid password or corrupted data.", e);
+        }
+    }
+    
+    private static SecretKey deriveKeyFromPassword(String password, byte[] salt) throws Exception {
+        try {
+            SecretKeyFactory factory = SecretKeyFactory.getInstance(KEY_DERIVATION_ALGORITHM);
+            KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, PBKDF2_ITERATIONS, AES_KEY_LENGTH);
+            SecretKey tempSecret = factory.generateSecret(spec);
+            return new SecretKeySpec(tempSecret.getEncoded(), ALGORITHM);
+        } catch (Exception e) {
+            throw new Exception("Failed to derive key from password", e);
+        }
+    }
+    
+    private static byte[] generateRandomBytes(int length) {
+        byte[] bytes = new byte[length];
+        new SecureRandom().nextBytes(bytes);
+        return bytes;
+    }
+    
+    public static String generatePassword(int length, boolean includeSymbols) {
+        String upperCase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        String lowerCase = "abcdefghijklmnopqrstuvwxyz";
+        String numbers = "0123456789";
+        String symbols = "!@#$%^&*()_+-=[]{}|;:,.<>?";
+        
+        String characters = upperCase + lowerCase + numbers;
+        if (includeSymbols) {
+            characters += symbols;
+        }
+        
+        SecureRandom random = new SecureRandom();
+        StringBuilder password = new StringBuilder();
+        
+        password.append(upperCase.charAt(random.nextInt(upperCase.length())));
+        password.append(lowerCase.charAt(random.nextInt(lowerCase.length())));
+        password.append(numbers.charAt(random.nextInt(numbers.length())));
+        
+        if (includeSymbols && length > 3) {
+            password.append(symbols.charAt(random.nextInt(symbols.length())));
+        }
+        
+        for (int i = password.length(); i < length; i++) {
+            password.append(characters.charAt(random.nextInt(characters.length())));
+        }
+        
+        char[] passwordArray = password.toString().toCharArray();
+        for (int i = passwordArray.length - 1; i > 0; i--) {
+            int j = random.nextInt(i + 1);
+            char temp = passwordArray[i];
+            passwordArray[i] = passwordArray[j];
+            passwordArray[j] = temp;
+        }
+        
+        return new String(passwordArray);
+    }
+}
+
+Validator
+package com.passwordmanager.util;
+
+import java.util.regex.Pattern;
+
+public class Validator {
+    
+    private static final int MIN_PASSWORD_LENGTH = 8;
+    private static final int MAX_PASSWORD_LENGTH = 128;
+    
+    private static final Pattern EMAIL_PATTERN = Pattern.compile(
+        "^[a-zA-Z0-9_+&*-]+(?:\\.[a-zA-Z0-9_+&*-]+)*@(?:[a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,7}$"
+    );
+    
+    private static final Pattern WEBSITE_PATTERN = Pattern.compile(
+        "^(https?://)?([a-zA-Z0-9-]+\\.)+[a-zA-Z]{2,}(/.*)?$"
+    );
+    
+    public static boolean isValidString(String input) {
+        return input != null && !input.trim().isEmpty();
+    }
+    
+    public static boolean isValidEmail(String email) {
+        return isValidString(email) && EMAIL_PATTERN.matcher(email.trim()).matches();
+    }
+    
+    public static boolean isValidWebsite(String website) {
+        return isValidString(website) && WEBSITE_PATTERN.matcher(website.trim()).matches();
+    }
+    
+    public static boolean isValidUsername(String username) {
+        if (!isValidString(username)) return false;
+        
+        String trimmed = username.trim();
+        return trimmed.length() >= 3 && 
+               trimmed.length() <= 50 && 
+               Pattern.matches("^[a-zA-Z0-9._-]+$", trimmed);
+    }
+    
+    public static PasswordStrength checkPasswordStrength(String password) {
+        if (password == null) return PasswordStrength.INVALID;
+        
+        int length = password.length();
+        if (length < MIN_PASSWORD_LENGTH) return PasswordStrength.INVALID;
+        if (length > MAX_PASSWORD_LENGTH) return PasswordStrength.INVALID;
+        
+        int score = 0;
+        
+        if (length >= 8) score += 1;
+        if (length >= 12) score += 1;
+        if (length >= 16) score += 1;
+        
+        if (Pattern.compile(".*[a-z].*").matcher(password).matches()) score += 1;
+        if (Pattern.compile(".*[A-Z].*").matcher(password).matches()) score += 1;
+        if (Pattern.compile(".*[0-9].*").matcher(password).matches()) score += 1;
+        if (Pattern.compile(".*[!@#$%^&*()_+\\-=\\[\\]{}|;:,.<>?].*").matcher(password).matches()) score += 1;
+        
+        if (!hasCommonPatterns(password)) score += 1;
+        
+        if (score <= 3) return PasswordStrength.WEAK;
+        else if (score <= 5) return PasswordStrength.MEDIUM;
+        else if (score <= 7) return PasswordStrength.STRONG;
+        else return PasswordStrength.VERY_STRONG;
+    }
+    
+    private static boolean hasCommonPatterns(String password) {
+        String lower = password.toLowerCase();
+        
+        String[] commonPatterns = {
+            "123456", "abcdef", "qwerty", "password", "admin", "letmein",
+            "welcome", "monkey", "dragon", "master", "login", "access"
+        };
+        
+        for (String pattern : commonPatterns) {
+            if (lower.contains(pattern)) return true;
+        }
+        
+        if (Pattern.compile(".*(.)\\1{2,}.*").matcher(password).matches()) return true;
+        
+        return false;
+    }
+    
+    public static ValidationResult validateMasterPassword(String masterPassword) {
+        if (!isValidString(masterPassword)) {
+            return new ValidationResult(false, "Master password cannot be empty");
+        }
+        
+        PasswordStrength strength = checkPasswordStrength(masterPassword);
+        
+        switch (strength) {
+            case INVALID:
+                return new ValidationResult(false, 
+                    "Master password must be between " + MIN_PASSWORD_LENGTH + 
+                    " and " + MAX_PASSWORD_LENGTH + " characters");
+            case WEAK:
+                return new ValidationResult(false, 
+                    "Master password is too weak. Please include uppercase, lowercase, numbers, and symbols");
+            case MEDIUM:
+                return new ValidationResult(true, 
+                    "Master password strength: Medium. Consider making it stronger");
+            case STRONG:
+                return new ValidationResult(true, 
+                    "Master password strength: Strong");
+            case VERY_STRONG:
+                return new ValidationResult(true, 
+                    "Master password strength: Very Strong");
+            default:
+                return new ValidationResult(false, "Password validation failed");
+        }
+    }
+    
+    public static ValidationResult validateCredential(String website, String username, String password) {
+        if (!isValidString(website)) {
+            return new ValidationResult(false, "Website cannot be empty");
+        }
+        
+        if (!isValidString(username)) {
+            return new ValidationResult(false, "Username cannot be empty");
+        }
+        
+        if (!isValidString(password)) {
+            return new ValidationResult(false, "Password cannot be empty");
+        }
+        
+        if (website.length() > 200) {
+            return new ValidationResult(false, "Website URL too long (max 200 characters)");
+        }
+        
+        if (username.length() > 100) {
+            return new ValidationResult(false, "Username too long (max 100 characters)");
+        }
+        
+        if (password.length() > MAX_PASSWORD_LENGTH) {
+            return new ValidationResult(false, 
+                "Password too long (max " + MAX_PASSWORD_LENGTH + " characters)");
+        }
+        
+        return new ValidationResult(true, "Credential data is valid");
+    }
+    
+    public static String sanitizeInput(String input) {
+        if (input == null) return "";
+        return input.trim().replaceAll("[\\r\\n\\t]", " ");
+    }
+    
+    public static class ValidationResult {
+        private final boolean success;
+        private final String message;
+        
+        public ValidationResult(boolean success, String message) {
+            this.success = success;
+            this.message = message;
+        }
+        
+        public boolean isSuccess() {
+            return success;
+        }
+        
+        public String getMessage() {
+            return message;
+        }
+    }
+    
+    public enum PasswordStrength {
+        INVALID("Invalid"),
+        WEAK("Weak"),
+        MEDIUM("Medium"),
+        STRONG("Strong"),
+        VERY_STRONG("Very Strong");
+        
+        private final String displayName;
+        
+        PasswordStrength(String displayName) {
+            this.displayName = displayName;
+        }
+        
+        public String getDisplayName() {
+            return displayName;
+        }
+    }
+}
+
+PasswordManager
+package com.passwordmanager;
+
+import com.passwordmanager.model.Credential;
+import com.passwordmanager.handler.FileHandler;
+import com.passwordmanager.util.*;
+import java.util.*;
+
+public class PasswordManager {
+    private static List<Credential> credentials = new ArrayList<>();
+    private static String masterPassword;
+    private static Scanner scanner = new Scanner(System.in);
+
+    public static void main(String[] args) {
+        System.out.println("\n====================================================");
+        System.out.println("             SECURE PASSWORD MANAGER");
+        System.out.println("       Your credentials are AES-256 encrypted");
+        System.out.println("====================================================\n");
+
+        try {
+            authenticateUser();
+            loadExistingCredentials();
+            showMainMenu();
+        } catch (Exception e) {
+            System.err.println("Critical error: " + e.getMessage());
+            System.exit(1);
+        } finally {
+            scanner.close();
+        }
+    }
+
+    private static void authenticateUser() throws Exception {
+        System.out.println("\n---------------- AUTHENTICATION ----------------");
+        System.out.print("Enter master password: ");
+        String inputPassword = scanner.nextLine();
+
+        if (FileHandler.dataFileExists()) {
+            try {
+                FileHandler.loadCredentials(inputPassword);
+                masterPassword = inputPassword;
+                System.out.println("\n[✓] Authentication successful!\n");
+            } catch (Exception e) {
+                System.out.println("\n[!] Invalid master password!\n");
+                System.exit(1);
+            }
+        } else {
+            Validator.ValidationResult result = Validator.validateMasterPassword(inputPassword);
+            if (!result.isSuccess()) {
+                System.out.println("\n[!] " + result.getMessage() + "\n");
+                System.exit(1);
+            }
+            masterPassword = inputPassword;
+            System.out.println("\n[✓] Master password set successfully!\n");
+        }
+    }
+
+    private static void loadExistingCredentials() {
+        try {
+            credentials = FileHandler.loadCredentials(masterPassword);
+            System.out.println("[✓] Loaded " + credentials.size() + " credentials from secure storage.\n");
+        } catch (Exception e) {
+            System.out.println("[!] Starting with empty credential vault.\n");
+            credentials = new ArrayList<>();
+        }
+    }
+
+    private static void showMainMenu() {
+        while (true) {
+            System.out.println(
+                "====================================================\n" +
+                "                 SECURE PASSWORD MANAGER            \n" +
+                "====================================================");
+            System.out.println(
+                "  [1] Add New Credential\n" +
+                "  [2] View All Credentials\n" +
+                "  [3] Search Credentials\n" +
+                "  [4] Update Credential\n" +
+                "  [5] Delete Credential\n" +
+                "  [6] Generate Strong Password\n" +
+                "  [7] Export Backup\n" +
+                "  [8] Change Master Password\n" +
+                "  [9] Exit\n" +
+                " [10] Import/Restore from Backup\n" +
+                "----------------------------------------------------");
+            System.out.print("  Enter your choice (1-10): ");
+
+            try {
+                int choice = Integer.parseInt(scanner.nextLine().trim());
+                handleMenuChoice(choice);
+            } catch (NumberFormatException e) {
+                System.out.println("\n[!] Invalid input. Please enter a number between 1-10.\n");
+            }
+        }
+    }
+
+    private static void handleMenuChoice(int choice) {
+        try {
+            switch (choice) {
+                case 1: addCredential(); break;
+                case 2: viewAllCredentials(); break;
+                case 3: searchCredentials(); break;
+                case 4: updateCredential(); break;
+                case 5: deleteCredential(); break;
+                case 6: generatePassword(); break;
+                case 7: exportBackup(); break;
+                case 8: changeMasterPassword(); break;
+                case 9: exitApplication(); break;
+                case 10: importBackup(); break;
+                default: System.out.println("\n[!] Invalid option. Please choose 1-10.\n");
+            }
+        } catch (Exception e) {
+            System.err.println("\n[!] Error: " + e.getMessage() + "\n");
+        }
+    }
+
+    private static void addCredential() throws Exception {
+        System.out.println("\n---------------- ADD NEW CREDENTIAL ----------------");
+        System.out.print("Website: ");
+        String website = Validator.sanitizeInput(scanner.nextLine());
+
+        System.out.print("Username: ");
+        String username = Validator.sanitizeInput(scanner.nextLine());
+
+        System.out.print("Password: ");
+        String password = scanner.nextLine();
+
+        System.out.print("Notes (optional): ");
+        String notes = Validator.sanitizeInput(scanner.nextLine());
+
+        Validator.ValidationResult result = Validator.validateCredential(website, username, password);
+        if (!result.isSuccess()) {
+            System.out.println("\n[!] " + result.getMessage() + "\n");
+            return;
+        }
+
+        Credential credential = new Credential(website, username, password, notes);
+        credentials.add(credential);
+
+        FileHandler.saveCredentials(credentials, masterPassword);
+        System.out.println("\n[✓] Credential added successfully!\n");
+    }
+
+    private static void viewAllCredentials() {
+        System.out.println("\n---------------- ALL CREDENTIALS ----------------");
+        if (credentials.isEmpty()) {
+            System.out.println("[!] No credentials stored.\n");
+            return;
+        }
+        System.out.printf("%-4s%-25s%-20s%-20s\n", "No.", "Website", "Username", "Password");
+        System.out.println("--------------------------------------------------------------");
+        for (int i = 0; i < credentials.size(); i++) {
+            Credential cred = credentials.get(i);
+            System.out.printf("%-4d%-25s%-20s%-20s\n", (i + 1), cred.getWebsite(), cred.getUsername(), "****");
+        }
+        System.out.print("\nShow actual passwords? (y/N): ");
+        String showPasswords = scanner.nextLine().trim();
+        if (showPasswords.equalsIgnoreCase("y") || showPasswords.equalsIgnoreCase("yes")) {
+            System.out.println("\n------- Credentials With Passwords -------");
+            for (int i = 0; i < credentials.size(); i++) {
+                System.out.println("\n[" + (i + 1) + "]");
+                System.out.println(credentials.get(i).toString());
+            }
+        }
+        System.out.println();
+    }
+
+    
+    private static void searchCredentials() {
+        System.out.println("\n---------------- SEARCH CREDENTIALS ----------------");
+        System.out.print("Enter search term (website or username): ");
+        String searchTerm = scanner.nextLine().toLowerCase();
+
+        List<Credential> matches = new ArrayList<>();
+        for (Credential cred : credentials) {
+            if (cred.getWebsite().toLowerCase().contains(searchTerm) || 
+                cred.getUsername().toLowerCase().contains(searchTerm)) {
+                matches.add(cred);
+            }
+        }
+
+        if (matches.isEmpty()) {
+            System.out.println("\n[!] No matching credentials found.\n");
+            return;
+        }
+
+        System.out.println("--------------------------------------------------------------");
+        System.out.printf("%-4s%-25s%-20s%-20s\n", "No.", "Website", "Username", "Password");
+        System.out.println("--------------------------------------------------------------");
+        for (int i = 0; i < matches.size(); i++) {
+            Credential cred = matches.get(i);
+            System.out.printf("%-4d%-25s%-20s%-20s\n", (i + 1), cred.getWebsite(), cred.getUsername(), "****");
+        }
+
+        System.out.print("\nShow actual passwords? (y/N): ");
+        String showPasswords = scanner.nextLine().trim();
+        if (showPasswords.equalsIgnoreCase("y") || showPasswords.equalsIgnoreCase("yes")) {
+            System.out.println("\n------- Matching Credentials With Passwords -------");
+            for (int i = 0; i < matches.size(); i++) {
+                System.out.println("\n[" + (i + 1) + "]");
+                System.out.println(matches.get(i).toString());
+            }
+        }
+        System.out.println();
+    }
+
+    private static void updateCredential() throws Exception {
+        if (credentials.isEmpty()) {
+            System.out.println("\n[!] No credentials to update.\n");
+            return;
+        }
+
+        System.out.println("\n---------------- UPDATE CREDENTIAL ----------------");
+        viewAllCredentials();
+        System.out.print("Enter credential number to update: ");
+        try {
+            int index = Integer.parseInt(scanner.nextLine()) - 1;
+            if (index < 0 || index >= credentials.size()) {
+                System.out.println("\n[!] Invalid credential number.\n");
+                return;
+            }
+
+            Credential cred = credentials.get(index);
+            System.out.println("\nUpdating credential for Website: " + cred.getWebsite() + ", Username: " + cred.getUsername());
+
+            System.out.print("New password [hidden]: ");
+            String password = scanner.nextLine();
+            if (!password.trim().isEmpty()) {
+                cred.setPassword(password);
+            } else {
+                System.out.println("[!] Password not updated (blank input).");
+            }
+
+            System.out.print("New notes [" + (cred.getNotes() != null ? cred.getNotes() : "none") + "]: ");
+            String notes = scanner.nextLine();
+            if (!notes.trim().isEmpty()) {
+                cred.setNotes(Validator.sanitizeInput(notes));
+            }
+
+            FileHandler.saveCredentials(credentials, masterPassword);
+            System.out.println("\n[✓] Password/notes updated successfully!\n");
+
+        } catch (NumberFormatException e) {
+            System.out.println("\n[!] Invalid number format.\n");
+        }
+    }
+
+    private static void deleteCredential() throws Exception {
+        if (credentials.isEmpty()) {
+            System.out.println("\n[!] No credentials to delete.\n");
+            return;
+        }
+
+        viewAllCredentials();
+        System.out.print("Enter credential number to delete: ");
+        try {
+            int index = Integer.parseInt(scanner.nextLine()) - 1;
+            if (index < 0 || index >= credentials.size()) {
+                System.out.println("\n[!] Invalid credential number.\n");
+                return;
+            }
+
+            Credential cred = credentials.get(index);
+            System.out.print("Delete '" + cred.getWebsite() + "' / '" + cred.getUsername() + "'? (y/N): ");
+            String confirm = scanner.nextLine();
+
+            if (confirm.equalsIgnoreCase("y") || confirm.equalsIgnoreCase("yes")) {
+                credentials.remove(index);
+                FileHandler.saveCredentials(credentials, masterPassword);
+                System.out.println("\n[✓] Credential deleted successfully!\n");
+            } else {
+                System.out.println("\nDeletion cancelled.\n");
+            }
+
+        } catch (NumberFormatException e) {
+            System.out.println("\n[!] Invalid number format.\n");
+        }
+    }
+
+    private static void generatePassword() {
+        System.out.println("\n---------------- GENERATE STRONG PASSWORD ----------------");
+        System.out.print("Password length (8-64): ");
+
+        try {
+            int length = Integer.parseInt(scanner.nextLine());
+            if (length < 8 || length > 64) {
+                System.out.println("\n[!] Length must be between 8 and 64 characters.\n");
+                return;
+            }
+
+            System.out.print("Include symbols? (Y/n): ");
+            String includeSymbols = scanner.nextLine();
+            boolean useSymbols = !includeSymbols.equalsIgnoreCase("n") && !includeSymbols.equalsIgnoreCase("no");
+
+            String generatedPassword = EncryptionUtil.generatePassword(length, useSymbols);
+            System.out.println("\n[✓] Generated password: " + generatedPassword);
+
+            Validator.PasswordStrength strength = Validator.checkPasswordStrength(generatedPassword);
+            System.out.println("Password strength: " + strength.getDisplayName() + "\n");
+
+        } catch (NumberFormatException e) {
+            System.out.println("\n[!] Invalid number format.\n");
+        }
+    }
+
+    private static void exportBackup() throws Exception {
+        System.out.println("\n---------------- EXPORT BACKUP ----------------");
+        System.out.print("Enter backup file path (e.g., C:\\backup.dat): ");
+        String exportPath = scanner.nextLine().trim();
+        if (exportPath.isEmpty()) {
+            exportPath = "backup_" + System.currentTimeMillis() + ".dat";
+            System.out.println("Using default backup path: " + exportPath);
+        }
+        FileHandler.exportCredentials(credentials, masterPassword, exportPath);
+        System.out.println("\n[✓] Backup exported to: " + exportPath + "\n");
+    }
+
+    private static void importBackup() throws Exception {
+        System.out.println("\n---------------- IMPORT/RESTORE BACKUP ----------------");
+        System.out.print("Enter full path to backup file (e.g., C:\\password.dat): ");
+        String importPath = scanner.nextLine().trim();
+
+        if (importPath.isEmpty()) {
+            System.out.println("\n[!] Backup file path cannot be empty.\n");
+            return;
+        }
+
+        try {
+            List<Credential> importedCredentials = FileHandler.importCredentials(importPath, masterPassword);
+            int importCount = 0;
+            for (Credential c : importedCredentials) {
+                if (!credentials.contains(c)) {
+                    credentials.add(c);
+                    importCount++;
+                }
+            }
+            FileHandler.saveCredentials(credentials, masterPassword);
+            System.out.println("\n[✓] Successfully imported " + importCount + " new credential(s)!\n");
+        } catch (Exception e) {
+            System.out.println("\n[!] Import failed: " + e.getMessage() + "\n");
+        }
+    }
+
+    private static void changeMasterPassword() throws Exception {
+        System.out.println("\n---------------- CHANGE MASTER PASSWORD ----------------");
+        System.out.print("Enter current master password: ");
+        String currentPassword = scanner.nextLine();
+
+        if (!currentPassword.equals(masterPassword)) {
+            System.out.println("\n[!] Incorrect current password!\n");
+            return;
+        }
+
+        System.out.print("Enter new master password: ");
+        String newPassword = scanner.nextLine();
+
+        Validator.ValidationResult result = Validator.validateMasterPassword(newPassword);
+        if (!result.isSuccess()) {
+            System.out.println("\n[!] " + result.getMessage() + "\n");
+            return;
+        }
+
+        System.out.print("Confirm new master password: ");
+        String confirmPassword = scanner.nextLine();
+
+        if (!newPassword.equals(confirmPassword)) {
+            System.out.println("\n[!] Passwords do not match!\n");
+            return;
+        }
+
+        masterPassword = newPassword;
+        FileHandler.saveCredentials(credentials, masterPassword);
+        System.out.println("\n[✓] Master password changed successfully!\n");
+    }
+
+    private static void exitApplication() throws Exception {
+        System.out.println("\n---------------- EXIT ----------------");
+        FileHandler.saveCredentials(credentials, masterPassword);
+        System.out.println("[✓] All data saved securely.\nThank you for using Secure Password Manager!\n");
+        System.exit(0);
+    }
+}
